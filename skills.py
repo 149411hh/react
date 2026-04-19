@@ -1,3 +1,10 @@
+"""
+Agent Skills integration module.
+
+Supports discovering, loading, and executing external skills/plugins for the Research Agent.
+Follows the AgentSkills specification.
+"""
+
 import logging
 import re
 import subprocess
@@ -14,52 +21,45 @@ DEFAULT_SCRIPT_TIMEOUT = 60
 
 @dataclass
 class SkillMetadata:
-    """Represents an Agent Skill with metadata parsed from SKILL.md frontmatter.
-
-    see: AgentSkills Specification: https://agentskills.io/specification
-
-    """
+    """Represents metadata of a discovered skill."""
 
     name: str
     description: str
-    path: str  # Absolute path to the skill directory
+    path: str                      # Absolute path to skill directory
     license: Optional[str] = None
     compatibility: Optional[str] = None
     metadata: Dict[str, str] = field(default_factory=dict)
     allowed_tools: Optional[str] = None
 
 
+# ====================== Skill Discovery ======================
 def parse_skill_frontmatter(skill_md_path: str) -> Optional[SkillMetadata]:
-    """
-    Parse the YAML frontmatter from a SKILL.md file.
-    Returns a Skill object with metadata, or None if parsing fails.
-    """
+    """Parse YAML frontmatter from SKILL.md file."""
     try:
-        with open(skill_md_path, mode="r", encoding="utf-8") as f:
+        with open(skill_md_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        frontmatter_match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
-        if not frontmatter_match:
+        # Extract YAML frontmatter
+        match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+        if not match:
             return None
 
-        frontmatter_yaml = frontmatter_match.group(1)
-        frontmatter = yaml.safe_load(frontmatter_yaml)
-
+        frontmatter = yaml.safe_load(match.group(1))
         if not frontmatter:
             return None
 
-        # Required fields
         name = frontmatter.get("name")
         description = frontmatter.get("description")
 
         if not name or not description:
             return None
 
-        # Validate name format (lowercase, hyphens, no consecutive hyphens)
+        # Validate skill name format
         if not re.match(r"^[a-z0-9]+(-[a-z0-9]+)*$", name):
+            logger.warning(f"Invalid skill name format: {name}")
             return None
 
-        skill_dir = str(Path(skill_md_path).parent)
+        skill_dir = str(Path(skill_md_path).parent.resolve())
 
         return SkillMetadata(
             name=name,
@@ -68,7 +68,6 @@ def parse_skill_frontmatter(skill_md_path: str) -> Optional[SkillMetadata]:
             license=frontmatter.get("license"),
             compatibility=frontmatter.get("compatibility"),
             metadata=frontmatter.get("metadata", {}),
-            # allowed_tools=frontmatter.get("allowed-tools"),
         )
 
     except Exception as e:
@@ -77,49 +76,33 @@ def parse_skill_frontmatter(skill_md_path: str) -> Optional[SkillMetadata]:
 
 
 def discover_skills(skill_directories: List[str]) -> List[SkillMetadata]:
-    """
-    Discover skills from configured directories.
-    A skill is a folder containing a SKILL.md file.
-
-    Args:
-        skill_directories: List of directory paths to scan for skills
-
-    Returns:
-        List of discovered Skill objects with parsed metadata
-    """
+    """Discover all skills from given directories."""
     skills = []
 
-    for skill_root_dir in skill_directories:
-        skill_path = Path(skill_root_dir)
-
+    for skill_root in skill_directories:
+        skill_path = Path(skill_root)
         if not skill_path.exists() or not skill_path.is_dir():
-            logger.warning(
-                f"Skill root directory does not exist or is not a directory, skipping: {skill_root_dir}"
-            )
+            logger.warning(f"Skill directory does not exist: {skill_root}")
             continue
-        for skill_dir in skill_path.iterdir():
-            if not skill_dir.is_dir():
+
+        for item in skill_path.iterdir():
+            if not item.is_dir():
                 continue
-            skill_md = skill_dir / "SKILL.md"
+
+            skill_md = item / "SKILL.md"
             if not skill_md.exists():
                 continue
+
             skill = parse_skill_frontmatter(str(skill_md))
             if skill:
                 skills.append(skill)
+
     return skills
 
 
+# ====================== Prompt Generation ======================
 def skills_to_xml(skills: List[SkillMetadata]) -> str:
-    """
-    Generate XML representation of available skills for system prompt injection.
-    Follows the agentskills specification format.
-
-    Args:
-        skills: List of Skill objects
-
-    Returns:
-        XML string for inclusion in system prompt
-    """
+    """Convert skills list to XML format for system prompt."""
     if not skills:
         return ""
 
@@ -127,9 +110,10 @@ def skills_to_xml(skills: List[SkillMetadata]) -> str:
     for skill in skills:
         lines.append("  <skill>")
         lines.append(f"    <name>{skill.name}</name>")
-        # Escape XML special characters in description
+        # Escape XML special characters
         escaped_desc = (
-            skill.description.replace("&", "&amp;")
+            skill.description
+            .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
         )
@@ -143,15 +127,7 @@ def skills_to_xml(skills: List[SkillMetadata]) -> str:
 
 
 def build_skills_system_prompt(skills: List[SkillMetadata]) -> str:
-    """
-    Build the system prompt section for skills.
-
-    Args:
-        skills: List of available Skill objects
-
-    Returns:
-        System prompt text including skill instructions and available skills XML
-    """
+    """Build the skills section for system prompt."""
     if not skills:
         return ""
 
@@ -159,51 +135,40 @@ def build_skills_system_prompt(skills: List[SkillMetadata]) -> str:
 
     return f"""
 <agent_skills>
-When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
+When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively.
 
 To use a skill:
-1. Read the skill's `SKILL.md` file (with the `load_skill_file` tool) at the provided location to get full instructions.
-2. Follow the instructions within the skill to complete the task
-3. Skills may include scripts, references, and assets that you can access as needed
-4. Execute the script with the `execute_script` tool when the skill requires it
+1. Read the skill's SKILL.md file using the load_skill_file tool.
+2. Follow the instructions in the skill documentation.
+3. Use execute_script tool when the skill requires running scripts.
 
-note:
-- You can use the `load_skill_file` tool to load the file content (`SKILL.md` or other files in the skill directory).
+Notes:
 - Only use skills when they are relevant to the current task.
-- Not load same file (SKILL.md or other references file ) multiple times with `load_skill_file` tool.
-- **Must not use the skills as tools, only use the tools provided by the model.**
+- Do not load the same file multiple times.
+- Skills are not tools themselves — use only the provided tools.
 
 {skills_xml}
 </agent_skills>
 """
 
 
+# ====================== Skill Execution Tools ======================
 class SkillIntegrationTools:
-    """
-    Provide tools that used for skill integration, including:
+    """Tools for loading and executing skills."""
 
-    - load_skill_file: Load a file from a skill directory, such as `SKILL.md` or other files in the skill directory.
-    - execute_script: Execute a script provided by the skill, such as `python scripts/now.py`.
-    """
-
-    def __init__(self, skills: List[SkillMetadata]) -> None:
+    def __init__(self, skills: List[SkillMetadata]):
         self.skills = {skill.name: skill for skill in skills}
 
     def load_skill_file(self, skill_name: str, file_path: str = "SKILL.md") -> str:
-        """
-        Load a file from a skill directory.
-
-        Args:
-            skill_name (str): The name of the skill, must be one of the available skills.
-            file_path (str): The path to the file to load, default is `SKILL.md`
-
-        Returns:
-            str: The content of the file or an error message.
-        """
+        """Load a file from a skill directory."""
         try:
+            if skill_name not in self.skills:
+                return f"Error: Skill '{skill_name}' not found."
+
             skill_root = Path(self.skills[skill_name].path).resolve()
             target_path = (skill_root / file_path).resolve()
 
+            # Security: prevent path traversal
             if not target_path.is_relative_to(skill_root):
                 return f"Error: Access denied. File '{file_path}' is outside the skill directory."
 
@@ -214,53 +179,37 @@ class SkillIntegrationTools:
                 return f.read()
 
         except Exception as e:
-            logger.warning(
-                f"Failed to load file {file_path} from skill {skill_name}: {str(e)}",
-                exc_info=True,
-            )
-            return f"Error: Failed to load file {file_path} from skill {skill_name}: {str(e)}"
+            logger.warning(f"Failed to load file {file_path} from skill {skill_name}: {e}")
+            return f"Error: Failed to load file from skill '{skill_name}': {str(e)}"
 
     def execute_script(self, skill_name: str, command: str) -> str:
-        """
-        Execute a script provided by the skill (synchronous version).
-
-        Args:
-            skill_name (str): The name of the skill.
-            command (str): The shell command to execute.
-
-        Returns:
-            str: The stdout and stderr of the script execution.
-        """
+        """Execute a script provided by the skill."""
         try:
+            if skill_name not in self.skills:
+                return f"Error: Skill '{skill_name}' not found."
+
             skill_root = Path(self.skills[skill_name].path).resolve()
 
-            try:
-                completed = subprocess.run(
-                    command,
-                    shell=True,
-                    cwd=skill_root,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=DEFAULT_SCRIPT_TIMEOUT,
-                    text=True,
-                    errors="replace",
-                )
-            except subprocess.TimeoutExpired:
-                return "<stdout></stdout><stderr>Error: Execution timed out.</stderr>"
+            completed = subprocess.run(
+                command,
+                shell=True,
+                cwd=skill_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=DEFAULT_SCRIPT_TIMEOUT,
+                text=True,
+                errors="replace",
+            )
 
             stdout_str = (completed.stdout or "").strip()
             stderr_str = (completed.stderr or "").strip()
 
-            logger.info(f"Executed script {command} in skill {skill_name} successfully")
+            logger.info(f"Executed script '{command}' in skill '{skill_name}'")
 
-            return (
-                f"<stdout>\n{stdout_str}\n</stdout>\n"
-                f"<stderr>\n{stderr_str}\n</stderr>"
-            )
+            return f"<stdout>\n{stdout_str}\n</stdout>\n<stderr>\n{stderr_str}\n</stderr>"
 
+        except subprocess.TimeoutExpired:
+            return "<stdout></stdout><stderr>Error: Script execution timed out.</stderr>"
         except Exception as e:
-            logger.warning(
-                f"Failed to execute script {command} in skill {skill_name}: {str(e)}",
-                exc_info=True,
-            )
+            logger.warning(f"Failed to execute script in skill {skill_name}: {e}")
             return f"<stdout></stdout><stderr>System Error: {str(e)}</stderr>"
