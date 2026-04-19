@@ -1,3 +1,9 @@
+"""
+Prompts module for the Research Agent.
+Contains system prompt, user prompt template, and extractor prompt.
+"""
+
+# ====================== System Prompt ======================
 SYSTEM_PROMPT = """You are a Web Information Seeking Master. Your task is to thoroughly seek the internet for information and provide accurate answers to questions. No matter how complex the query, you will not give up until you find the correct answer.
 
 As you proceed, adhere to the following principles:
@@ -16,7 +22,7 @@ As you proceed, adhere to the following principles:
 
 Current date: """
 
-
+# ====================== User Prompt Template ======================
 USER_PROMPT_TEMPLATE = """You solve questions by calling tools and reasoning step by step.
 
 <tools>
@@ -52,15 +58,15 @@ CRITICAL RULES:
 - Answer with ONLY the requested information - no explanations, no extra context. Give ONE single precise answer. Do NOT include alternative names, identifiers, or translations in parentheses. Pick the most commonly used name.
 - If asked for a name, ALWAYS answer with the FULL name (firstname + lastname, or 姓+名) by default. Never answer with only a given name or only a surname. For organizations and entities, also use the full official name. However, if the question specifies a particular format (e.g., "official name", "pen name", "stage name", "nickname"), follow that requirement instead. If for a number, just the number.
 - When identifying an entity (person, place, object, celestial body, etc.), always use its commonly known name in the answer language, NOT technical codes, catalog numbers, or registry IDs, unless the question specifically asks for such identifiers.
-- **Answer language**: By default, answer in the SAME language as the question. Chinese question → Chinese answer, English question → English answer. This includes foreign proper nouns: for a Chinese question, prefer the standard Chinese translation (e.g., "海尔-波普彗星" not "Hale-Bopp", "玛丽·居里" not "Marie Curie", "布达佩斯" not "Budapest"). However, if the question’s context implies the answer should be in a different language, follow that context. For example: if a Chinese question asks for "英文全称" or "official name" of a foreign entity, answer in English; if it asks for a specific format like "[Name] Limited", answer in that format. In general, when the question specifies a format, naming convention, or other requirement that naturally calls for a particular language, use that language.
-- For translated names (e.g., person names, place names, organization names), you MUST use the most authoritative and widely recognized translation. Prioritize translations from official sources, encyclopedias (Wikipedia/Baidu Baike), and government/institutional publications. Search specifically to confirm the standard translation — do not guess or transliterate on your own.
-- IMPORTANT: If multiple independent sources consistently point to the same answer, TRUST that consensus. Do NOT discard it because of a minor discrepancy (e.g., a year off by 1-3, a spelling variant, or slightly different metadata). Databases often have indexing errors — the consensus from actual content is more reliable than metadata.
+- **Answer language**: By default, answer in the SAME language as the question. Chinese question → Chinese answer, English question → English answer. This includes foreign proper nouns: for a Chinese question, prefer the standard Chinese translation (e.g., "海尔-波普彗星" not "Hale-Bopp", "玛丽·居里" not "Marie Curie", "布达佩斯" not "Budapest"). However, if the question’s context implies the answer should be in a different language, follow that context.
+- For translated names (e.g., person names, place names, organization names), you MUST use the most authoritative and widely recognized translation. Prioritize translations from official sources, encyclopedias (Wikipedia/Baidu Baike), and government/institutional publications.
+- IMPORTANT: If multiple independent sources consistently point to the same answer, TRUST that consensus. Do NOT discard it because of a minor discrepancy (e.g., a year off by 1-3, a spelling variant, or slightly different metadata).
 - **Search engine selection**: For questions about international/English entities (even if the question is in Chinese), prefer 'google' engine. For questions about Chinese-specific entities, prefer 'bing' engine. You can mix engines in a single search call.
-- **FINAL ANSWER FORMAT CHECK (MANDATORY)**: Before outputting <answer>, you MUST explicitly verify: (1) Is the answer language correct? Chinese question = Chinese answer, English question = English answer, unless the question context requires otherwise. (2) Is the translation the most authoritative standard form? (3) Is the format exactly as requested (full name, number only, specific pattern, etc.)? Getting the right entity but wrong language/format/translation = WRONG. Your answer is graded by exact string match — every character matters.
+- **FINAL ANSWER FORMAT CHECK (MANDATORY)**: Before outputting <answer>, you MUST explicitly verify: (1) Is the answer language correct? (2) Is the translation the most authoritative standard form? (3) Is the format exactly as requested? Getting the right entity but wrong language/format/translation = WRONG. Your answer is graded by exact string match — every character matters.
 
 Question: """
 
-
+# ====================== Extractor Prompt ======================
 EXTRACTOR_PROMPT = """Please process the following webpage content and user goal to extract relevant information:
 
 ## **Webpage Content**
@@ -70,9 +76,28 @@ EXTRACTOR_PROMPT = """Please process the following webpage content and user goal
 {goal}
 
 ## **Task Guidelines**
-1. **Content Scanning for Rationale**: Locate the **specific sections/data** directly related to the user's goal within the webpage content
-2. **Key Extraction for Evidence**: Identify and extract the **most relevant information** from the content, never miss any important information, output the **full original context** of the content as far as possible, it can be more than three paragraphs.
+1. **Content Scanning for Rationale**: Locate the specific sections/data directly related to the user's goal within the webpage content.
+2. **Key Extraction for Evidence**: Identify and extract the most relevant information from the content. Output the full original context as much as possible.
 3. **Summary Output for Summary**: Organize into a concise paragraph with logical flow, prioritizing clarity and judge the contribution of the information to the goal.
 
-**Final Output Format using JSON format has "rational", "evidence", "summary" fields**
+**Final Output Format** (JSON with "rational", "evidence", "summary" fields):
 """
+
+# ====================== Public Interface ======================
+def get_system_prompt() -> str:
+    """Return the system prompt with current date."""
+    from datetime import date
+    return SYSTEM_PROMPT + date.today().strftime("%Y-%m-%d")
+
+
+def get_user_prompt_template() -> str:
+    """Return the user prompt template."""
+    return USER_PROMPT_TEMPLATE
+
+
+def get_extractor_prompt(webpage_content: str, goal: str) -> str:
+    """Format the extractor prompt with webpage content and goal."""
+    return EXTRACTOR_PROMPT.format(
+        webpage_content=webpage_content,
+        goal=goal
+    )
