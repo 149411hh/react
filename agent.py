@@ -1,27 +1,34 @@
+"""
+FastAPI service for the Research Agent.
+
+Provides a clean REST API endpoint to interact with the Research Agent.
+Supports both normal JSON response and Server-Sent Events (SSE) streaming.
+"""
+
 import asyncio
 import json
-import os
 from typing import Optional
 
 from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
-
-from agent_loop import react_agent
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
-app = FastAPI()
+# Load environment variables
+load_dotenv()
+
+from agent_loop import react_agent
+
+app = FastAPI(title="Research Agent API", version="1.0.0")
 
 
 class QueryRequest(BaseModel):
+    """Request model for agent query."""
     model_config = ConfigDict(
         extra="allow",
         json_schema_extra={
             "example": {"question": "Where is the capital of France?"}
-        },
+        }
     )
 
     question: str
@@ -29,27 +36,29 @@ class QueryRequest(BaseModel):
 
 
 class QueryResponse(BaseModel):
+    """Response model."""
     answer: str
 
 
-@app.post("/")
+@app.post("/", response_model=QueryResponse)
 async def query(req: QueryRequest, raw_request: Request):
     """
-    Research Agent API endpoint.
-    Supports both JSON and SSE responses based on Accept header.
-    When SSE is requested, sends periodic heartbeat comments to keep
-    the connection alive while the agent is processing.
+    Main endpoint for the Research Agent.
+
+    Supports two response modes:
+    - Normal JSON response (default)
+    - Server-Sent Events (SSE) when Accept: text/event-stream is set
     """
     accept = raw_request.headers.get("accept", "")
 
+    # SSE Streaming Mode
     if "text/event-stream" in accept:
-        # SSE mode: stream heartbeats while agent processes, then send answer
         async def sse_response():
             try:
-                # Run agent in background task
+                # Run agent in background
                 agent_task = asyncio.create_task(react_agent(req.question))
 
-                # Send heartbeat comments every 5s to keep connection alive
+                # Send heartbeats to keep connection alive
                 while not agent_task.done():
                     yield ": heartbeat\n\n"
                     try:
@@ -59,7 +68,7 @@ async def query(req: QueryRequest, raw_request: Request):
 
                 answer = await agent_task
             except Exception as e:
-                print(f"[agent] SSE error: {e}")
+                print(f"[API] SSE error: {e}")
                 answer = f"Error: {e}"
 
             data = json.dumps({"answer": answer}, ensure_ascii=False)
@@ -67,10 +76,23 @@ async def query(req: QueryRequest, raw_request: Request):
 
         return StreamingResponse(sse_response(), media_type="text/event-stream")
 
-    # Normal JSON mode
+    # Normal JSON Mode
     try:
         answer = await react_agent(req.question)
     except Exception as e:
-        print(f"[agent] Error: {e}")
+        print(f"[API] Error: {e}")
         answer = f"Error: {e}"
+
     return JSONResponse(content={"answer": answer})
+
+
+# Optional: Health check endpoint
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "healthy", "service": "Research Agent API"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
